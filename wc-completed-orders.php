@@ -5,7 +5,7 @@ Plugin Name: WooCommerce Completed Orders
 Description: Monthly completed orders with export.
 Author: FirstTracks Marketing
 Author URI: https://firsttracksmarketing.com/
-Version: 1.0.0
+Version: 1.0.1
 */
 
 // Exit if accessed directly
@@ -303,8 +303,46 @@ class FT_WC_Completed_Orders_Report {
             $events = array();
             $completed_event_order_ids = array();
 
-            // A completed order keeps its completion event even if its current
-            // status later changes to refunded, cancelled, or another status.
+            // The report's positive event is the payment approval/capture, not
+            // the later administrative transition to Completed. Query by the
+            // paid date so the selected month and displayed date stay aligned,
+            // even if the order is completed, refunded, or cancelled later.
+            $query_page = 1;
+            do {
+                $paid_result = wc_get_orders(array(
+                    'type' => 'shop_order',
+                    'status' => array_keys(wc_get_order_statuses()),
+                    'date_paid' => $date_range,
+                    'limit' => $batch_size,
+                    'paged' => $query_page,
+                    'paginate' => true,
+                ));
+                $paid_max_pages = (int) $paid_result->max_num_pages;
+
+                foreach ($paid_result->orders as $order) {
+                    if ($this->is_uncaptured_authorization($order)) {
+                        continue;
+                    }
+
+                    $rounded_total = (float) wc_format_decimal($order->get_total(), wc_get_price_decimals());
+                    $paid_date = $order->get_date_paid();
+                    if ($rounded_total !== 0.0 && $paid_date) {
+                        $events[] = array(
+                            'order_id' => $order->get_id(),
+                            'status' => 'completed',
+                            'timestamp' => $paid_date->getTimestamp(),
+                            'total' => $rounded_total,
+                        );
+                        $completed_event_order_ids[$order->get_id()] = true;
+                    }
+                }
+
+                unset($paid_result);
+                $query_page++;
+            } while ($query_page <= $paid_max_pages);
+
+            // Offline/manual orders may have no paid timestamp. For those only,
+            // retain the Completed transition as a fallback report date.
             $query_page = 1;
             do {
                 $completed_result = wc_get_orders(array(
@@ -318,69 +356,31 @@ class FT_WC_Completed_Orders_Report {
                 $completed_max_pages = (int) $completed_result->max_num_pages;
 
                 foreach ($completed_result->orders as $order) {
-                    if ($this->is_uncaptured_authorization($order)) {
-                        continue;
-                    }
-
-                    $rounded_total = (float) wc_format_decimal($order->get_total(), wc_get_price_decimals());
-                    $completed_date = $order->get_date_completed();
-                    if ($rounded_total !== 0.0 && $completed_date) {
-                        $positive_event_date = $order->get_date_paid() ?: $completed_date;
-                        $events[] = array(
-                            'order_id' => $order->get_id(),
-                            'status' => 'completed',
-                            'timestamp' => $positive_event_date->getTimestamp(),
-                            'total' => $rounded_total,
-                        );
-                        $completed_event_order_ids[$order->get_id()] = true;
-                    }
-                }
-
-                unset($completed_result);
-                $query_page++;
-            } while ($query_page <= $completed_max_pages);
-
-            // A later cancellation/refund can leave a previously charged order
-            // without a completion date. Recover its positive event from the paid
-            // date so a captured payment and its refund are both represented.
-            $query_page = 1;
-            do {
-                $paid_result = wc_get_orders(array(
-                    'type' => 'shop_order',
-                    'status' => array('wc-refunded'),
-                    'date_paid' => $date_range,
-                    'limit' => $batch_size,
-                    'paged' => $query_page,
-                    'paginate' => true,
-                ));
-                $paid_max_pages = (int) $paid_result->max_num_pages;
-
-                foreach ($paid_result->orders as $order) {
                     $order_id = $order->get_id();
                     if (
                         isset($completed_event_order_ids[$order_id]) ||
-                        $order->get_date_completed() ||
+                        $order->get_date_paid() ||
                         $this->is_uncaptured_authorization($order)
                     ) {
                         continue;
                     }
 
-                    $paid_date = $order->get_date_paid();
+                    $completed_date = $order->get_date_completed();
                     $rounded_total = (float) wc_format_decimal($order->get_total(), wc_get_price_decimals());
-                    if ($rounded_total !== 0.0 && $paid_date) {
+                    if ($rounded_total !== 0.0 && $completed_date) {
                         $events[] = array(
                             'order_id' => $order_id,
                             'status' => 'completed',
-                            'timestamp' => $paid_date->getTimestamp(),
+                            'timestamp' => $completed_date->getTimestamp(),
                             'total' => $rounded_total,
                         );
                         $completed_event_order_ids[$order_id] = true;
                     }
                 }
 
-                unset($paid_result);
+                unset($completed_result);
                 $query_page++;
-            } while ($query_page <= $paid_max_pages);
+            } while ($query_page <= $completed_max_pages);
 
             // Fetch refunds separately and store only their lightweight event
             // data. Parent orders are loaded later, one report batch at a time.
@@ -418,12 +418,20 @@ class FT_WC_Completed_Orders_Report {
                             wc_get_price_decimals()
                         );
 
-                        if ($completion_timestamp && $completed_total !== 0.0) {
-                            $paid_date = $parent_order->get_date_paid();
+                        $paid_date = $parent_order->get_date_paid();
+                        $positive_timestamp = $paid_date
+                            ? $paid_date->getTimestamp()
+                            : $completion_timestamp;
+
+                        if (
+                            $positive_timestamp >= $range_start &&
+                            $positive_timestamp <= $range_end &&
+                            $completed_total !== 0.0
+                        ) {
                             $events[] = array(
                                 'order_id' => $parent_id,
                                 'status' => 'completed',
-                                'timestamp' => $paid_date ? $paid_date->getTimestamp() : $completion_timestamp,
+                                'timestamp' => $positive_timestamp,
                                 'total' => $completed_total,
                             );
                             $completed_event_order_ids[$parent_id] = true;
