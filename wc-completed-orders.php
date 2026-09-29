@@ -5,7 +5,7 @@ Plugin Name: WooCommerce Completed Orders
 Description: Monthly completed orders with export.
 Author: FirstTracks Marketing
 Author URI: https://firsttracksmarketing.com/
-Version: 1.0.1
+Version: 1.0.2
 */
 
 // Exit if accessed directly
@@ -603,6 +603,7 @@ class FT_WC_Completed_Orders_Report {
             $user_fields = array(
                 'group_number' => '',
                 'local_board'  => '',
+                'buddyboss_groups' => '',
                 'phone'        => '',
                 'mobile'       => '',
                 'sales_staff'  => '',
@@ -652,6 +653,7 @@ class FT_WC_Completed_Orders_Report {
                 'extra_emails'   => $additional_emails,
                 'group_number'   => $user_fields['group_number'],
                 'local_board'    => $user_fields['local_board'],
+                'buddyboss_groups' => $user_fields['buddyboss_groups'],
                 'phone'          => $user_fields['phone'],
                 'mobile'         => $user_fields['mobile'],
                 'sales_staff'    => $user_fields['sales_staff'],
@@ -807,6 +809,7 @@ class FT_WC_Completed_Orders_Report {
             'Status',
             'Product',
             'Membership Renewal',
+            'Chapter',
             'Total',
             'Invoice #',
             'Email',
@@ -855,6 +858,7 @@ class FT_WC_Completed_Orders_Report {
             ucwords(str_replace('-', ' ', $row['status'])),
             implode(', ', $product_names),
             $row['renewal'],
+            $row['buddyboss_groups'],
             $formatted_total,
             $row['invoice_number'],
             $row['email'],
@@ -881,6 +885,7 @@ class FT_WC_Completed_Orders_Report {
             'Status',
             'Product',
             'Membership Renewal',
+            'Chapter',
             'Total',
             'Payment Method',
             'Credit Card Last 4 Digits',
@@ -910,6 +915,7 @@ class FT_WC_Completed_Orders_Report {
             ucwords(str_replace('-', ' ', $row['status'])),
             implode(', ', $product_names),
             $row['renewal'],
+            $row['buddyboss_groups'],
             $row['total'],
             $row['payment'],
             $row['last4'],
@@ -1025,7 +1031,7 @@ class FT_WC_Completed_Orders_Report {
 
             // Headers
             $headers = $this->get_xlsx_headers();
-            $columns = range('A', 'L');
+            $columns = range('A', 'M');
 
             foreach ($headers as $index => $header) {
                 $sheet->setCellValue($columns[$index] . '1', $header);
@@ -1038,7 +1044,7 @@ class FT_WC_Completed_Orders_Report {
                     'startColor' => array('rgb' => 'E8E8E8'),
                 ),
             );
-            $sheet->getStyle('A1:L1')->applyFromArray($header_style);
+            $sheet->getStyle('A1:M1')->applyFromArray($header_style);
 
             // Data rows
             $row = 2;
@@ -1046,7 +1052,7 @@ class FT_WC_Completed_Orders_Report {
                 foreach ($this->get_xlsx_row($r) as $index => $value) {
                     $cell = $columns[$index] . $row;
 
-                    if ($index === 7) {
+                    if ($index === 8) {
                         $xlsx_total = $r['status'] === 'refunded'
                             ? -abs((float) $r['total'])
                             : (float) $r['total'];
@@ -1065,7 +1071,7 @@ class FT_WC_Completed_Orders_Report {
                         continue;
                     }
 
-                    if ($index === 9 && preg_match('/^[0-9]{4}$/D', (string) $value)) {
+                    if ($index === 10 && preg_match('/^[0-9]{4}$/D', (string) $value)) {
                         $sheet->getCell($cell)->setValueExplicit(
                             (int) $value,
                             \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC
@@ -1079,10 +1085,10 @@ class FT_WC_Completed_Orders_Report {
             }
 
             if ($row > 2) {
-                $sheet->getStyle('H2:H' . ($row - 1))
+                $sheet->getStyle('I2:I' . ($row - 1))
                     ->getNumberFormat()
                     ->setFormatCode('#,##0.00;(#,##0.00)');
-                $sheet->getStyle('J2:J' . ($row - 1))
+                $sheet->getStyle('K2:K' . ($row - 1))
                     ->getNumberFormat()
                     ->setFormatCode('0000');
             }
