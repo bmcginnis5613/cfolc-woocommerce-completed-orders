@@ -1,6 +1,6 @@
 {
     "name": "firsttracks/wc-completed-orders",
-    "description": "Monthly completed WooCommerce orders and payment details",
+    "description": "Completed WooCommerce orders and payment details by date range",
     "type": "wordpress-plugin",
     "license": "GPL-2.0-or-later",
     "require": {

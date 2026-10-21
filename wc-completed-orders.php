@@ -2,10 +2,10 @@
 
 /*
 Plugin Name: WooCommerce Completed Orders
-Description: Monthly completed orders with export.
+Description: Completed orders by date range with export.
 Author: FirstTracks Marketing
 Author URI: https://firsttracksmarketing.com/
-Version: 1.0.2
+Version: 1.4.5
 */
 
 // Exit if accessed directly
@@ -51,7 +51,7 @@ class FT_WC_Completed_Orders_Report {
 
     private const PAGE_SIZE = 50;
     private const EXPORT_BATCH_SIZE = 500;
-    private $monthly_orders_cache = array();
+    private $date_range_orders_cache = array();
 
     /**
      * Constructor
@@ -62,7 +62,6 @@ class FT_WC_Completed_Orders_Report {
         add_filter('menu_order', array($this, 'place_incomplete_orders_after_completed'), PHP_INT_MAX);
         add_action('admin_enqueue_scripts', array($this, 'enqueue_assets'));
         add_action('admin_init', array($this, 'handle_export'));
-        add_action('wp_ajax_ftwcc_save_column_prefs', array($this, 'save_column_preferences'));
     }
 
     /**
@@ -138,79 +137,63 @@ class FT_WC_Completed_Orders_Report {
             'ftwcc-admin',
             plugin_dir_url(__FILE__) . 'admin-style.css',
             array(),
-            '2.0.7'
+            '2.3.2'
         );
 
         wp_enqueue_script(
             'ftwcc-admin',
             plugin_dir_url(__FILE__) . 'admin-script.js',
             array('jquery'),
-            '2.0.1',
+            '2.1.0',
             true
         );
-
-        wp_localize_script('ftwcc-admin', 'ftwccData', array(
-            'ajax_url'    => admin_url('admin-ajax.php'),
-            'nonce'       => wp_create_nonce('ftwcc_column_prefs'),
-            'column_prefs' => $this->get_column_preferences(),
-        ));
     }
 
-    /**
-     * Get column visibility preferences for the current user
-     */
+    /** Default column visibility before browser cookie preferences are applied. */
     public function get_column_preferences() {
-        $user_id  = get_current_user_id();
-        $prefs    = get_user_meta($user_id, 'ftwcc_column_visibility', true);
-
-        $defaults = array(
+        return array(
             'id'       => true,
             'date'     => true,
             'customer' => true,
             'status'   => true,
+            'refund_note' => true,
+            'coupon'   => true,
             'items'    => true,
             'renewal'  => true,
+            'chapter'  => true,
             'total'    => true,
             'invoice'  => true,
             'payment'  => true,
             'last4'    => true,
             'reference' => true,
         );
-
-        if (empty($prefs) || !is_array($prefs)) {
-            return $defaults;
-        }
-
-        return array_intersect_key(wp_parse_args($prefs, $defaults), $defaults);
     }
 
-    /**
-     * Save column visibility preferences via AJAX
-     */
-    public function save_column_preferences() {
-        check_ajax_referer('ftwcc_column_prefs', 'nonce');
+    /** Selected inclusive date range in the WordPress site timezone. */
+    public function get_selected_date_range() {
+        $has_from = isset($_GET['ftwcc_date_from']);
+        $has_to = isset($_GET['ftwcc_date_to']);
 
-        if (!current_user_can('manage_woocommerce')) {
-            wp_send_json_error('Insufficient permissions');
+        if ($has_from || $has_to) {
+            if (!$has_from || !$has_to) {
+                wp_die('Both From and To dates are required.', '', array('response' => 400));
+            }
+
+            $from = is_string($_GET['ftwcc_date_from']) ? wp_unslash($_GET['ftwcc_date_from']) : '';
+            $to = is_string($_GET['ftwcc_date_to']) ? wp_unslash($_GET['ftwcc_date_to']) : '';
+
+            if (!$this->is_valid_calendar_date($from) || !$this->is_valid_calendar_date($to)) {
+                wp_die('Invalid report date. Use YYYY-MM-DD.', '', array('response' => 400));
+            }
+
+            if ($from > $to) {
+                wp_die('The From date must be on or before the To date.', '', array('response' => 400));
+            }
+
+            return array('from' => $from, 'to' => $to);
         }
 
-        $column  = isset($_POST['column']) && is_string($_POST['column']) ? sanitize_key(wp_unslash($_POST['column'])) : '';
-        if (!array_key_exists($column, $this->get_column_preferences())) {
-            wp_send_json_error('Invalid column');
-        }
-        $visible = filter_var($_POST['visible'] ?? false, FILTER_VALIDATE_BOOLEAN);
-
-        $user_id = get_current_user_id();
-        $prefs   = $this->get_column_preferences();
-        $prefs[$column] = $visible;
-
-        update_user_meta($user_id, 'ftwcc_column_visibility', $prefs);
-
-        wp_send_json_success();
-    }
-
-    /** Selected calendar month in the WordPress site timezone. */
-    public function get_selected_month() {
+        // Continue to support previously bookmarked month-based report URLs.
         if (isset($_GET['ftwcc_month_number'], $_GET['ftwcc_year'])) {
             $month_number = is_scalar($_GET['ftwcc_month_number']) ? absint($_GET['ftwcc_month_number']) : 0;
             $year = is_scalar($_GET['ftwcc_year']) ? absint($_GET['ftwcc_year']) : 0;
@@ -219,23 +202,77 @@ class FT_WC_Completed_Orders_Report {
                 wp_die('Invalid report month or year.', '', array('response' => 400));
             }
 
-            return sprintf('%04d-%02d', $year, $month_number);
+            return $this->get_month_date_range(sprintf('%04d-%02d', $year, $month_number));
         }
 
-        if (!isset($_GET['ftwcc_month'])) {
-            return current_datetime()->format('Y-m');
+        if (isset($_GET['ftwcc_month'])) {
+            $month = is_string($_GET['ftwcc_month']) ? wp_unslash($_GET['ftwcc_month']) : '';
+            if (!preg_match('/^[1-9][0-9]{3}-(0[1-9]|1[0-2])$/D', $month)) {
+                wp_die('Invalid report month. Use YYYY-MM.', '', array('response' => 400));
+            }
+            return $this->get_month_date_range($month);
         }
-        $month = is_string($_GET['ftwcc_month']) ? wp_unslash($_GET['ftwcc_month']) : '';
-        if (!preg_match('/^[1-9][0-9]{3}-(0[1-9]|1[0-2])$/D', $month)) {
-            wp_die('Invalid report month. Use YYYY-MM.', '', array('response' => 400));
-        }
-        return $month;
+
+        return $this->get_month_date_range(current_datetime()->format('Y-m'));
     }
 
-    /** Timestamp bounds include the entire month, including DST transitions. */
-    public function get_month_range($month) {
-        $start = new DateTimeImmutable($month . '-01 00:00:00', wp_timezone());
-        return $start->getTimestamp() . '...' . ($start->modify('+1 month')->getTimestamp() - 1);
+    private function is_valid_calendar_date($date) {
+        if (!preg_match('/^[1-9][0-9]{3}-(0[1-9]|1[0-2])-([0-2][0-9]|3[0-1])$/D', $date)) {
+            return false;
+        }
+
+        $parsed = DateTimeImmutable::createFromFormat('!Y-m-d', $date, wp_timezone());
+        return $parsed && $parsed->format('Y-m-d') === $date;
+    }
+
+    /** Convert a YYYY-MM value to its first and last calendar dates. */
+    private function get_month_date_range($month) {
+        $start = new DateTimeImmutable($month . '-01', wp_timezone());
+        return array(
+            'from' => $start->format('Y-m-d'),
+            'to' => $start->modify('last day of this month')->format('Y-m-d'),
+        );
+    }
+
+    /** Timestamp bounds include both selected dates, including DST transitions. */
+    public function get_timestamp_range(array $date_range) {
+        $start = new DateTimeImmutable($date_range['from'] . ' 00:00:00', wp_timezone());
+        $end = new DateTimeImmutable($date_range['to'] . ' 00:00:00', wp_timezone());
+        return $start->getTimestamp() . '...' . ($end->modify('+1 day')->getTimestamp() - 1);
+    }
+
+    /** Selected WooCommerce product IDs. An empty selection includes all products. */
+    private function get_selected_product_ids() {
+        if (!isset($_GET['ftwcc_products'])) {
+            return array();
+        }
+
+        $raw_product_ids = wp_unslash($_GET['ftwcc_products']);
+        if (!is_array($raw_product_ids)) {
+            wp_die('Invalid product filter.', '', array('response' => 400));
+        }
+
+        $product_ids = array_values(array_unique(array_filter(array_map('absint', $raw_product_ids))));
+        sort($product_ids, SORT_NUMERIC);
+        return $product_ids;
+    }
+
+    /** Match simple products or any variation belonging to a selected parent product. */
+    private function order_matches_products($order, array $selected_product_ids) {
+        if (empty($selected_product_ids)) {
+            return true;
+        }
+
+        $selected_lookup = array_fill_keys($selected_product_ids, true);
+        foreach ($order->get_items('line_item') as $item) {
+            $product_id = absint($item->get_product_id());
+            $variation_id = absint($item->get_variation_id());
+            if (isset($selected_lookup[$product_id]) || isset($selected_lookup[$variation_id])) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /** Whether Authorize.Net explicitly records that the payment was never captured. */
@@ -294,10 +331,12 @@ class FT_WC_Completed_Orders_Report {
     }
 
     public function get_completed_orders($page = 1, $limit = self::PAGE_SIZE) {
-        $month = $this->get_selected_month();
+        $selected_range = $this->get_selected_date_range();
+        $selected_product_ids = $this->get_selected_product_ids();
+        $cache_key = $selected_range['from'] . ':' . $selected_range['to'] . ':' . implode(',', $selected_product_ids);
 
-        if (!isset($this->monthly_orders_cache[$month])) {
-            $date_range = $this->get_month_range($month);
+        if (!isset($this->date_range_orders_cache[$cache_key])) {
+            $date_range = $this->get_timestamp_range($selected_range);
             list($range_start, $range_end) = array_map('intval', explode('...', $date_range, 2));
             $batch_size = 200;
             $events = array();
@@ -305,7 +344,7 @@ class FT_WC_Completed_Orders_Report {
 
             // The report's positive event is the payment approval/capture, not
             // the later administrative transition to Completed. Query by the
-            // paid date so the selected month and displayed date stay aligned,
+            // paid date so the selected range and displayed date stay aligned,
             // even if the order is completed, refunded, or cancelled later.
             $query_page = 1;
             do {
@@ -320,7 +359,10 @@ class FT_WC_Completed_Orders_Report {
                 $paid_max_pages = (int) $paid_result->max_num_pages;
 
                 foreach ($paid_result->orders as $order) {
-                    if ($this->is_uncaptured_authorization($order)) {
+                    if (
+                        $this->is_uncaptured_authorization($order) ||
+                        !$this->order_matches_products($order, $selected_product_ids)
+                    ) {
                         continue;
                     }
 
@@ -360,7 +402,8 @@ class FT_WC_Completed_Orders_Report {
                     if (
                         isset($completed_event_order_ids[$order_id]) ||
                         $order->get_date_paid() ||
-                        $this->is_uncaptured_authorization($order)
+                        $this->is_uncaptured_authorization($order) ||
+                        !$this->order_matches_products($order, $selected_product_ids)
                     ) {
                         continue;
                     }
@@ -403,7 +446,11 @@ class FT_WC_Completed_Orders_Report {
                     }
 
                     $parent_order = wc_get_order($parent_id);
-                    if (!$parent_order || $this->is_uncaptured_authorization($parent_order)) {
+                    if (
+                        !$parent_order ||
+                        $this->is_uncaptured_authorization($parent_order) ||
+                        !$this->order_matches_products($parent_order, $selected_product_ids)
+                    ) {
                         continue;
                     }
 
@@ -441,6 +488,7 @@ class FT_WC_Completed_Orders_Report {
                     $events[] = array(
                         'order_id' => $parent_id,
                         'status' => 'refunded',
+                        'refund_note' => (string) $refund->get_reason(),
                         'timestamp' => $refund_date->getTimestamp(),
                         'total' => abs((float) wc_format_decimal(
                             $refund->get_total(),
@@ -460,10 +508,10 @@ class FT_WC_Completed_Orders_Report {
                     : $second_event['order_id'] <=> $first_event['order_id'];
             });
 
-            $this->monthly_orders_cache[$month] = $events;
+            $this->date_range_orders_cache[$cache_key] = $events;
         }
 
-        $events = $this->monthly_orders_cache[$month];
+        $events = $this->date_range_orders_cache[$cache_key];
         $total = count($events);
         $limit = max(1, (int) $limit);
         $max_num_pages = max(1, (int) ceil($total / $limit));
@@ -631,6 +679,9 @@ class FT_WC_Completed_Orders_Report {
             $invoice_url    = $invoice_number ? $this->get_invoice_url($order_id) : '';
 
             $payment = $this->get_payment_details($order);
+            $coupon_codes = method_exists($order, 'get_coupon_codes')
+                ? $order->get_coupon_codes()
+                : $order->get_used_coupons();
             $report_date_timestamp = $event['timestamp'];
             $rows[] = array(
                 'payment' => $payment['payment'],
@@ -643,6 +694,8 @@ class FT_WC_Completed_Orders_Report {
                 'customer'       => $customer,
                 'customer_id'    => $customer_id,
                 'status'         => $order_status,
+                'refund_note'    => isset($event['refund_note']) ? $event['refund_note'] : '',
+                'coupon'         => implode(', ', array_map('strval', $coupon_codes)),
                 'items'          => $item_names,
                 'renewal'        => $this->is_subscription_renewal($order) ? 'Yes' : 'No',
                 'total'          => $order_total,
@@ -757,7 +810,7 @@ class FT_WC_Completed_Orders_Report {
 
         if (
             $page !== 'wc-completed-orders' ||
-            !in_array($action, array('ftwcc_export_csv', 'ftwcc_export_xlsx'), true)
+            $action !== 'ftwcc_export_xlsx'
         ) {
             return;
         }
@@ -772,11 +825,6 @@ class FT_WC_Completed_Orders_Report {
             wp_die('WooCommerce is not active.');
         }
         $rows = $this->export_rows();
-
-        if ($action === 'ftwcc_export_csv') {
-            $this->export_csv($rows);
-        }
-
         $this->export_xlsx($rows);
     }
 
@@ -795,86 +843,6 @@ class FT_WC_Completed_Orders_Report {
         } while ($batch <= $max_batches);
     }
 
-    /**
-     * Export column headers.
-     *
-     * @return string[]
-     */
-    private function get_export_headers() {
-        return array(
-            'Order ID',
-            'Date Invoiced',
-            'Event Date',
-            'Customer',
-            'Status',
-            'Product',
-            'Membership Renewal',
-            'Chapter',
-            'Total',
-            'Invoice #',
-            'Email',
-            'Additional Emails',
-            'Group Number',
-            'Local Board',
-            'Phone',
-            'Mobile',
-            'Sales Staff',
-            'Payment Method',
-            'Credit Card Last 4 Digits',
-            'ACH / Check Reference',
-            'Currency',
-        );
-    }
-
-    /**
-     * Format one row for CSV export.
-     *
-     * @param array $row
-     * @return array
-     */
-    private function get_export_row(array $row) {
-        $date_invoiced_timestamp = $row['date'] ? strtotime($row['date']) : false;
-        $formatted_total = html_entity_decode(
-            wp_strip_all_tags(wc_price($row['total'], array('currency' => $row['currency']))),
-            ENT_QUOTES | ENT_HTML5,
-            'UTF-8'
-        );
-        $product_names = array_map(
-            function ($item_name) {
-                return html_entity_decode(
-                    wp_strip_all_tags((string) $item_name),
-                    ENT_QUOTES | ENT_HTML5,
-                    'UTF-8'
-                );
-            },
-            $row['items']
-        );
-
-        return array(
-            $row['order_id'],
-            $date_invoiced_timestamp ? date('Y-m-d', $date_invoiced_timestamp) : '',
-            $row['completed'],
-            $row['customer'],
-            ucwords(str_replace('-', ' ', $row['status'])),
-            implode(', ', $product_names),
-            $row['renewal'],
-            $row['buddyboss_groups'],
-            $formatted_total,
-            $row['invoice_number'],
-            $row['email'],
-            $row['extra_emails'],
-            $row['group_number'],
-            $row['local_board'],
-            $row['phone'],
-            $row['mobile'],
-            $row['sales_staff'],
-            $row['payment'],
-            $row['last4'],
-            $row['reference'],
-            $row['currency'],
-        );
-    }
-
     /** Return the columns included in the XLSX export. */
     private function get_xlsx_headers() {
         return array(
@@ -883,13 +851,15 @@ class FT_WC_Completed_Orders_Report {
             'Event Date',
             'Customer',
             'Status',
+            'Refund Note',
+            'Coupon',
             'Product',
             'Membership Renewal',
-            'Chapter',
+            'Chapter(s)',
             'Total',
             'Payment Method',
-            'Credit Card Last 4 Digits',
-            'ACH / Check Reference',
+            'CC Digits',
+            'ACH/Check Ref',
             'Email',
         );
     }
@@ -913,6 +883,8 @@ class FT_WC_Completed_Orders_Report {
             $row['completed'],
             $row['customer'],
             ucwords(str_replace('-', ' ', $row['status'])),
+            $row['refund_note'],
+            $row['coupon'],
             implode(', ', $product_names),
             $row['renewal'],
             $row['buddyboss_groups'],
@@ -924,50 +896,21 @@ class FT_WC_Completed_Orders_Report {
         );
     }
 
-    /** Build a unique export filename for the current site and report month. */
+    /** Build a unique export filename for the current site and report date range. */
     private function get_export_filename($extension) {
         $site_domain = wp_parse_url(home_url(), PHP_URL_HOST);
         $site_domain = $site_domain ? sanitize_file_name($site_domain) : 'wordpress-site';
         $unique_id = gmdate('YmdHis') . wp_rand(1000, 9999);
+        $date_range = $this->get_selected_date_range();
 
         return sprintf(
-            '%s-wc-order-report-%s-%s.%s',
+            '%s-wc-order-report-%s-to-%s-%s.%s',
             $site_domain,
-            $this->get_selected_month(),
+            $date_range['from'],
+            $date_range['to'],
             $unique_id,
             $extension
         );
-    }
-
-    /**
-     * Export order rows to CSV.
-     *
-     * @param array $rows
-     */
-    private function export_csv(iterable $rows) {
-        $filename = $this->get_export_filename('csv');
-
-        header('Content-Type: text/csv; charset=utf-8');
-        header('Content-Disposition: attachment; filename="' . $filename . '"');
-        header('Cache-Control: max-age=0');
-
-        $output = fopen('php://output', 'w');
-        if ($output === false) {
-            wp_die('Unable to create CSV export.');
-        }
-
-        fwrite($output, "\xEF\xBB\xBF");
-        fputcsv($output, $this->get_export_headers());
-
-        foreach ($rows as $row) {
-            fputcsv($output, array_map(function ($value) {
-                $value = (string) $value;
-                return preg_match('/^[\x00-\x20]*[=+@-]/', $value) ? "'" . $value : $value;
-            }, $this->get_export_row($row)));
-        }
-
-        fclose($output);
-        exit;
     }
 
     /**
@@ -1000,18 +943,18 @@ class FT_WC_Completed_Orders_Report {
             return;
         }
         if ($this->has_loaded_phpspreadsheet_symbols()) {
-            throw new \RuntimeException('An incomplete PhpSpreadsheet library is already loaded. Use CSV or update the plugin providing the spreadsheet library.');
+            throw new \RuntimeException('An incomplete PhpSpreadsheet library is already loaded. Update the plugin providing the spreadsheet library.');
         }
         if (!class_exists('PMXE_Plugin', false) || !defined('PMXE_Plugin::ROOT_DIR')) {
-            throw new \RuntimeException('Activate WP All Export Pro with its PhpSpreadsheet library to export XLSX, or use CSV.');
+            throw new \RuntimeException('Activate WP All Export Pro with its PhpSpreadsheet library to export XLSX.');
         }
         $autoload = rtrim(\PMXE_Plugin::ROOT_DIR, '/\\') . '/vendor/autoload.php';
         if (!is_readable($autoload)) {
-            throw new \RuntimeException('This WP All Export installation does not expose vendor/autoload.php. Use CSV or a WP All Export version that includes PhpSpreadsheet.');
+            throw new \RuntimeException('This WP All Export installation does not expose vendor/autoload.php. Update WP All Export to a version that includes PhpSpreadsheet.');
         }
         require_once $autoload;
         if (!class_exists('PhpOffice\\PhpSpreadsheet\\Spreadsheet') || !class_exists('PhpOffice\\PhpSpreadsheet\\Writer\\Xlsx')) {
-            throw new \RuntimeException('This WP All Export version does not provide a compatible PhpSpreadsheet XLSX writer. Use CSV.');
+            throw new \RuntimeException('This WP All Export version does not provide a compatible PhpSpreadsheet XLSX writer.');
         }
     }
 
@@ -1028,10 +971,11 @@ class FT_WC_Completed_Orders_Report {
 
             $spreadsheet = new \PhpOffice\PhpSpreadsheet\Spreadsheet();
             $sheet       = $spreadsheet->getActiveSheet();
+            $sheet->setTitle('Sheet1');
 
             // Headers
             $headers = $this->get_xlsx_headers();
-            $columns = range('A', 'M');
+            $columns = range('A', 'O');
 
             foreach ($headers as $index => $header) {
                 $sheet->setCellValue($columns[$index] . '1', $header);
@@ -1044,7 +988,7 @@ class FT_WC_Completed_Orders_Report {
                     'startColor' => array('rgb' => 'E8E8E8'),
                 ),
             );
-            $sheet->getStyle('A1:M1')->applyFromArray($header_style);
+            $sheet->getStyle('A1:O1')->applyFromArray($header_style);
 
             // Data rows
             $row = 2;
@@ -1052,7 +996,7 @@ class FT_WC_Completed_Orders_Report {
                 foreach ($this->get_xlsx_row($r) as $index => $value) {
                     $cell = $columns[$index] . $row;
 
-                    if ($index === 8) {
+                    if ($index === 10) {
                         $xlsx_total = $r['status'] === 'refunded'
                             ? -abs((float) $r['total'])
                             : (float) $r['total'];
@@ -1071,7 +1015,7 @@ class FT_WC_Completed_Orders_Report {
                         continue;
                     }
 
-                    if ($index === 10 && preg_match('/^[0-9]{4}$/D', (string) $value)) {
+                    if ($index === 12 && preg_match('/^[0-9]{4}$/D', (string) $value)) {
                         $sheet->getCell($cell)->setValueExplicit(
                             (int) $value,
                             \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC
@@ -1085,10 +1029,10 @@ class FT_WC_Completed_Orders_Report {
             }
 
             if ($row > 2) {
-                $sheet->getStyle('I2:I' . ($row - 1))
+                $sheet->getStyle('K2:K' . ($row - 1))
                     ->getNumberFormat()
                     ->setFormatCode('#,##0.00;(#,##0.00)');
-                $sheet->getStyle('K2:K' . ($row - 1))
+                $sheet->getStyle('M2:M' . ($row - 1))
                     ->getNumberFormat()
                     ->setFormatCode('0000');
             }
@@ -1159,12 +1103,14 @@ class FT_WC_Completed_Orders_Report {
             wp_die('Insufficient permissions');
         }
         $column_prefs = $this->get_column_preferences();
-        $month = $this->get_selected_month();
-        $selected_year = (int) substr($month, 0, 4);
-        $selected_month_number = (int) substr($month, 5, 2);
-        $current_year = (int) current_datetime()->format('Y');
-        $first_year = max($current_year + 1, $selected_year);
-        $last_year = min($current_year - 10, $selected_year);
+        $date_range = $this->get_selected_date_range();
+        $selected_product_ids = $this->get_selected_product_ids();
+        $products = wc_get_products(array(
+            'status' => array('publish', 'private', 'draft', 'pending', 'future'),
+            'limit' => -1,
+            'orderby' => 'name',
+            'order' => 'ASC',
+        ));
         $page = isset($_GET['ftwcc_paged']) && is_scalar($_GET['ftwcc_paged']) ? max(1, absint($_GET['ftwcc_paged'])) : 1;
         $result = $this->get_completed_orders($page);
         $page = $result->page;
@@ -1175,57 +1121,82 @@ class FT_WC_Completed_Orders_Report {
 
             <form class="wco-order-filters wco-order-filters--top" method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>">
                 <input type="hidden" name="page" value="wc-completed-orders">
-                <label for="ftwcc-month-number">Month:</label>
-                <select id="ftwcc-month-number" name="ftwcc_month_number" required>
-                    <?php for ($month_number = 1; $month_number <= 12; $month_number++) : ?>
-                        <option value="<?php echo esc_attr($month_number); ?>" <?php selected($selected_month_number, $month_number); ?>>
-                            <?php echo esc_html(wp_date('F', gmmktime(12, 0, 0, $month_number, 1, 2000), new DateTimeZone('UTC'))); ?>
-                        </option>
-                    <?php endfor; ?>
-                </select>
-
-                <label for="ftwcc-year">Year:</label>
-                <select id="ftwcc-year" name="ftwcc_year" required>
-                    <?php for ($year = $first_year; $year >= $last_year; $year--) : ?>
-                        <option value="<?php echo esc_attr($year); ?>" <?php selected($selected_year, $year); ?>>
-                            <?php echo esc_html($year); ?>
-                        </option>
-                    <?php endfor; ?>
-                </select>
-
-                <button type="submit" class="button button-primary">Filter</button>
-            </form>
-
-            <!-- Controls bar -->
-            <div class="usr-controls">
-                <div class="usr-export-buttons">
-                    <form method="get" action="<?php echo esc_url(admin_url('admin.php')); ?>">
-                        <input type="hidden" name="page" value="wc-completed-orders">
-                        <input type="hidden" name="ftwcc_month" value="<?php echo esc_attr($month); ?>">
-                        <input type="hidden" name="_wpnonce" value="<?php echo esc_attr(wp_create_nonce('ftwcc_export')); ?>">
-                        <button type="submit" name="action" value="ftwcc_export_csv" class="button button-secondary">
-                        <span class="dashicons dashicons-download"></span> Export CSV
-                        </button>
-                        <button type="submit" name="action" value="ftwcc_export_xlsx" class="button button-secondary">
-                        <span class="dashicons dashicons-download"></span> Export XLSX
-                        </button>
-                    </form>
+                <div class="wco-filter-field">
+                    <label for="ftwcc-date-from">From:</label>
+                    <input type="date" id="ftwcc-date-from" name="ftwcc_date_from" value="<?php echo esc_attr($date_range['from']); ?>" required>
                 </div>
 
+                <div class="wco-filter-field">
+                    <label for="ftwcc-date-to">To:</label>
+                    <input type="date" id="ftwcc-date-to" name="ftwcc_date_to" value="<?php echo esc_attr($date_range['to']); ?>" required>
+                </div>
+
+                <div class="wco-filter-field wco-product-filter">
+                    <span id="ftwcc-products-label" class="wco-product-filter-label">Products:</span>
+                    <div class="wco-product-multiselect">
+                        <button
+                            type="button"
+                            class="button wco-product-toggle"
+                            aria-expanded="false"
+                            aria-controls="ftwcc-product-options"
+                            aria-labelledby="ftwcc-products-label ftwcc-products-summary"
+                        >
+                            <span id="ftwcc-products-summary">All products</span>
+                            <span class="dashicons dashicons-arrow-down-alt2" aria-hidden="true"></span>
+                        </button>
+                        <div id="ftwcc-product-options" class="wco-product-options-panel" hidden>
+                            <div class="wco-product-options-toolbar">
+                                <input type="search" class="wco-product-search" placeholder="Search products…" aria-label="Search products">
+                                <button type="button" class="button-link wco-product-clear">Uncheck all</button>
+                            </div>
+                            <div class="wco-product-options-list">
+                                <?php if (empty($products)) : ?>
+                                    <span class="wco-product-empty">No products found.</span>
+                                <?php else : ?>
+                                    <?php foreach ($products as $product) : ?>
+                                        <?php $product_label = $product->get_name(); ?>
+                                        <label class="wco-product-option">
+                                            <input
+                                                type="checkbox"
+                                                class="wco-product-checkbox"
+                                                name="ftwcc_products[]"
+                                                value="<?php echo esc_attr($product->get_id()); ?>"
+                                                <?php checked(in_array($product->get_id(), $selected_product_ids, true)); ?>
+                                            >
+                                            <span class="wco-product-option-name"><?php echo esc_html($product_label); ?></span>
+                                        </label>
+                                    <?php endforeach; ?>
+                                <?php endif; ?>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="button button-primary">Filter</button>
+                <input type="hidden" name="_wpnonce" value="<?php echo esc_attr(wp_create_nonce('ftwcc_export')); ?>">
+                <button type="submit" name="action" value="ftwcc_export_xlsx" class="button wco-export-xlsx">
+                    <span class="dashicons dashicons-download" aria-hidden="true"></span> Export XLSX
+                </button>
+            </form>
+
+            <!-- Column visibility controls -->
+            <div class="usr-controls">
                 <div class="usr-column-controls">
-                    <div class="usr-column-toggles">
-                        <strong>Show/Hide Columns:</strong>
+                    <div class="usr-column-toggles" role="group" aria-label="Show or hide table columns">
                         <?php
                         $toggles = array(
                             'id'       => 'Order ID',
                             'date'     => 'Event Date',
                             'payment'  => 'Payment Method',
-                            'last4'    => 'Credit Card Last 4 Digits',
-                            'reference' => 'ACH / Check Reference',
+                            'last4'    => 'CC Digits',
+                            'reference' => 'ACH/Check Ref',
                             'customer' => 'Customer',
                             'status'   => 'Status',
+                            'refund_note' => 'Refund Note',
+                            'coupon'   => 'Coupon',
                             'items'    => 'Product',
                             'renewal'  => 'Membership Renewal',
+                            'chapter'  => 'Chapter(s)',
                             'total'    => 'Total',
                             'invoice'  => 'Invoice #',
                         );
@@ -1248,15 +1219,15 @@ class FT_WC_Completed_Orders_Report {
 
             <div id="wco-table-wrap">
                 <?php if (empty($rows)) : ?>
-                    <div class="notice notice-info"><p>No completed orders found on this page for the selected month.</p></div>
+                    <div class="notice notice-info"><p>No completed orders found on this page for the selected date range.</p></div>
                 <?php else : ?>
-                    <?php $this->render_table($rows, $column_prefs); ?>
+                    <?php $this->render_table($rows, $column_prefs, $result->total); ?>
                 <?php endif; ?>
             </div>
             <?php if ($result->max_num_pages > 1) : ?>
                 <div class="tablenav wco-pagination"><div class="tablenav-pages">
                 <?php echo wp_kses_post(paginate_links(array(
-                    'base' => str_replace('999999999', '%#%', add_query_arg(array('page' => 'wc-completed-orders', 'ftwcc_month' => $month, 'ftwcc_paged' => 999999999), admin_url('admin.php'))),
+                    'base' => str_replace('999999999', '%#%', add_query_arg(array('page' => 'wc-completed-orders', 'ftwcc_date_from' => $date_range['from'], 'ftwcc_date_to' => $date_range['to'], 'ftwcc_products' => $selected_product_ids, 'ftwcc_paged' => 999999999), admin_url('admin.php'))),
                     'format' => '', 'current' => $page, 'total' => $result->max_num_pages,
                 ))); ?>
                 </div></div>
@@ -1270,8 +1241,9 @@ class FT_WC_Completed_Orders_Report {
      *
      * @param array $rows         Rows from build_order_rows()
      * @param array $column_prefs Visibility preferences
+     * @param int   $total        Total matching events across every page
      */
-    private function render_table(array $rows, array $column_prefs) {
+    private function render_table(array $rows, array $column_prefs, $total) {
         // Helper: inline style to hide a column when pref is false
         $hide = function($key) use ($column_prefs) {
             return !$column_prefs[$key] ? ' style="display:none;"' : '';
@@ -1292,16 +1264,25 @@ class FT_WC_Completed_Orders_Report {
                     <th class="usr-col-status"<?php echo $hide('status'); ?>>
                         Status
                     </th>
+                    <th class="usr-col-refund_note"<?php echo $hide('refund_note'); ?>>
+                        Refund Note
+                    </th>
+                    <th class="usr-col-coupon"<?php echo $hide('coupon'); ?>>
+                        Coupon
+                    </th>
                     <th class="usr-col-items"<?php echo $hide('items'); ?>>
                         Product
                     </th>
                     <th class="usr-col-renewal"<?php echo $hide('renewal'); ?>>
                         Membership Renewal
                     </th>
+                    <th class="usr-col-chapter"<?php echo $hide('chapter'); ?>>
+                        Chapter(s)
+                    </th>
                     <th class="usr-col-total"<?php echo $hide('total'); ?>>
                         Total
                     </th>
-                    <?php foreach (array('payment' => 'Payment Method', 'last4' => 'Credit Card Last 4 Digits', 'reference' => 'ACH / Check Reference') as $key => $label) : ?>
+                    <?php foreach (array('payment' => 'Payment Method', 'last4' => 'CC Digits', 'reference' => 'ACH/Check Ref') as $key => $label) : ?>
                         <th class="usr-col-<?php echo esc_attr($key); ?>"<?php echo $hide($key); ?>><?php echo esc_html($label); ?></th>
                     <?php endforeach; ?>
                     <th class="usr-col-invoice"<?php echo $hide('invoice'); ?>>
@@ -1344,6 +1325,16 @@ class FT_WC_Completed_Orders_Report {
                             </span>
                         </td>
 
+                        <!-- Refund note -->
+                        <td class="usr-col-refund_note"<?php echo $hide('refund_note'); ?>>
+                            <?php echo $row['refund_note'] !== '' ? esc_html($row['refund_note']) : '—'; ?>
+                        </td>
+
+                        <!-- Coupon codes -->
+                        <td class="usr-col-coupon"<?php echo $hide('coupon'); ?>>
+                            <?php echo $row['coupon'] !== '' ? esc_html($row['coupon']) : '—'; ?>
+                        </td>
+
                         <!-- Product -->
                         <td class="usr-col-items"<?php echo $hide('items'); ?>>
                             <?php if (!empty($row['items'])) : ?>
@@ -1362,9 +1353,19 @@ class FT_WC_Completed_Orders_Report {
                             <?php echo esc_html($row['renewal']); ?>
                         </td>
 
+                        <!-- Chapter -->
+                        <td class="usr-col-chapter"<?php echo $hide('chapter'); ?>>
+                            <?php echo $row['buddyboss_groups'] !== '' ? esc_html($row['buddyboss_groups']) : '—'; ?>
+                        </td>
+
                         <!-- Total -->
                         <td class="usr-col-total"<?php echo $hide('total'); ?>>
-                            <?php echo wp_kses_post(wc_price($row['total'], array('currency' => $row['currency']))); ?>
+                            <?php
+                            $display_total = $row['status'] === 'refunded'
+                                ? -abs((float) $row['total'])
+                                : (float) $row['total'];
+                            echo wp_kses_post(wc_price($display_total, array('currency' => $row['currency'])));
+                            ?>
                         </td>
 
                         <?php foreach (array('payment', 'last4', 'reference') as $key) : ?>
@@ -1394,8 +1395,11 @@ class FT_WC_Completed_Orders_Report {
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="11">
-                        <strong>Showing <?php echo count($rows); ?> orders</strong>
+                    <td colspan="14">
+                        <strong>
+                            Showing <?php echo esc_html(number_format_i18n(count($rows))); ?>
+                            of <?php echo esc_html(number_format_i18n((int) $total)); ?> orders
+                        </strong>
                     </td>
                 </tr>
             </tfoot>

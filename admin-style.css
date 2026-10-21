@@ -18,41 +18,41 @@
 /* ── Help tip ────────────────────────────────────────────── */
 /* ── Controls bar ────────────────────────────────────────── */
 .usr-controls {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin: 20px 0;
-    padding: 15px;
-    background: #fff;
+    margin: 0 0 20px;
+    overflow: hidden;
     border: 1px solid #ccd0d4;
-    border-radius: 4px;
-    flex-wrap: wrap;
-    gap: 15px;
+    border-radius: 8px;
+    background: #fff;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04);
 }
 
 /* ── Export buttons ──────────────────────────────────────── */
-.usr-export-buttons {
-    display: flex;
-    gap: 10px;
-}
-
-.usr-export-buttons form {
-    display: flex;
+.wco-order-filters--top .button.wco-export-xlsx {
+    display: inline-flex;
     align-items: center;
-    gap: 10px;
-    flex-wrap: wrap;
+    gap: 6px;
+    border-color: #217346;
+    background: #217346;
+    color: #fff;
 }
 
-.usr-export-buttons .button .dashicons {
-    line-height: 28px;
-    margin-right: 3px;
+.wco-order-filters--top .button.wco-export-xlsx:hover,
+.wco-order-filters--top .button.wco-export-xlsx:focus {
+    border-color: #185c37;
+    background: #185c37;
+    color: #fff;
+}
+
+.wco-order-filters--top .button.wco-export-xlsx:focus {
+    box-shadow: 0 0 0 1px #fff, 0 0 0 3px #217346;
+}
+
+.wco-order-filters--top .wco-export-xlsx .dashicons {
+    color: #fff !important;
 }
 
 .usr-column-controls {
-    display: flex;
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 8px;
+    padding: 16px 18px 18px;
 }
 
 .wco-order-filters {
@@ -81,6 +81,7 @@
 }
 
 .wco-order-filters--top {
+    align-items: flex-end;
     gap: 12px;
     margin: 20px 0;
 }
@@ -96,56 +97,178 @@
     background: transparent;
 }
 
-.wco-order-filters--top select,
+.wco-order-filters--top input[type="date"],
 .wco-order-filters--top .button {
     min-height: 40px;
 }
 
-.wco-order-filters--top select:first-of-type {
+.wco-order-filters--top input[type="date"] {
     min-width: 160px;
 }
 
-.wco-order-filters--top select:last-of-type {
-    min-width: 100px;
+.wco-filter-field {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
 }
 
-.wco-order-filters--top .button {
+.wco-filter-field > label,
+.wco-product-filter-label {
+    line-height: 1.4;
+}
+
+.wco-product-filter {
+    width: 340px;
+}
+
+.wco-product-filter-label {
+    font-weight: 600;
+}
+
+.wco-product-multiselect {
+    position: relative;
+    width: 100%;
+}
+
+.wco-order-filters--top .wco-product-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    width: 100%;
+    padding: 0 12px;
+    text-align: left;
+}
+
+#ftwcc-products-summary {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.wco-product-toggle .dashicons {
+    flex: 0 0 auto;
+    transition: transform 0.15s ease;
+}
+
+.wco-product-toggle[aria-expanded="true"] .dashicons {
+    transform: rotate(180deg);
+}
+
+.wco-product-options-panel {
+    position: absolute;
+    z-index: 1000;
+    top: calc(100% + 4px);
+    left: 0;
+    width: 420px;
+    max-width: min(90vw, 420px);
+    padding: 10px;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    background: #fff;
+    box-shadow: 0 6px 18px rgba(0, 0, 0, 0.16);
+}
+
+.wco-product-options-toolbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+}
+
+.wco-product-search {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.wco-product-clear {
+    flex: 0 0 auto;
+    white-space: nowrap;
+}
+
+.wco-product-options-list {
+    max-height: 280px;
+    overflow-y: auto;
+    border-top: 1px solid #dcdcde;
+}
+
+.wco-order-filters--top .wco-product-option {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    padding: 8px 6px;
+    border-bottom: 1px solid #f0f0f1;
+    border-radius: 0;
+    font-weight: 400;
+    cursor: pointer;
+}
+
+.wco-order-filters--top .wco-product-option:hover {
+    background: #f6f7f7;
+}
+
+.wco-product-option input {
+    flex: 0 0 auto;
+    margin-top: 2px;
+}
+
+.wco-product-option-name {
+    overflow-wrap: anywhere;
+}
+
+.wco-product-empty {
+    display: block;
+    padding: 12px 6px;
+    color: #646970;
+}
+
+.wco-order-filters--top > .button {
     padding: 0 22px;
 }
 
 /* ── Column toggles ──────────────────────────────────────── */
 .usr-column-toggles {
-    display: flex;
-    align-items: center;
-    gap: 15px;
-    flex-wrap: wrap;
-}
-
-.usr-column-toggles strong {
-    margin-right: 5px;
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 8px;
+    width: 100%;
 }
 
 .usr-column-toggles label {
-    display: inline-flex;
+    display: flex;
     align-items: center;
-    gap: 5px;
+    gap: 8px;
+    min-height: 40px;
+    box-sizing: border-box;
     cursor: pointer;
-    padding: 5px 10px;
-    border-radius: 3px;
-    transition: background-color 0.2s;
+    padding: 8px 10px;
+    border: 1px solid #dcdcde;
+    border-radius: 6px;
+    background: #fff;
+    color: #2c3338;
+    transition: border-color 0.15s, background-color 0.15s, box-shadow 0.15s;
 }
 
 .usr-column-toggles label:hover {
-    background-color: #f0f0f1;
+    border-color: #72aee6;
+    background-color: #f6f7f7;
 }
 
-.usr-column-toggles label.usr-saved {
-    background-color: #d4edda;
-    transition: background-color 0.2s;
+.usr-column-toggles label:has(input:checked) {
+    border-color: #72aee6;
+    background: #f0f6fc;
+}
+
+.usr-column-toggles label:focus-within {
+    border-color: #2271b1;
+    box-shadow: 0 0 0 1px #2271b1;
 }
 
 .usr-column-toggles input[type="checkbox"] {
+    flex: 0 0 auto;
     margin: 0;
+    accent-color: #2271b1;
 }
 
 /* ── Status badges ───────────────────────────────────────── */
@@ -263,17 +386,8 @@
 
 /* ── Responsive ──────────────────────────────────────────── */
 @media screen and (max-width: 782px) {
-    .usr-controls {
-        flex-direction: column;
-        align-items: flex-start;
-    }
-
-    .usr-export-buttons {
-        width: 100%;
-    }
-
-    .usr-export-buttons .button {
-        flex: 1;
+    .usr-column-controls {
+        padding: 14px;
     }
 
     .usr-column-controls,
@@ -284,12 +398,31 @@
     .wco-order-filters {
         width: 100%;
     }
+
+    .wco-filter-field,
+    .wco-product-multiselect,
+    .wco-product-toggle,
+    .wco-filter-field input[type="date"] {
+        width: 100%;
+    }
+
+    .wco-order-filters--top > .button {
+        justify-content: center;
+        width: 100%;
+    }
+
+    .wco-product-options-panel {
+        width: 100%;
+        max-width: 100%;
+        box-sizing: border-box;
+    }
 }
 
-/* Monthly completed orders report */
+/* Completed orders date-range report */
 #wco-table-wrap { overflow-x: auto; }
-.usr-renewals-table { min-width: 1320px; }
+.usr-renewals-table { min-width: 1720px; }
 .usr-col-payment, .usr-col-reference { overflow-wrap: anywhere; }
+.usr-col-refund_note, .usr-col-coupon, .usr-col-chapter { overflow-wrap: anywhere; }
 .usr-col-last4 { width: 95px; }
 .wco-status-badge.status-completed { background: #e7f5e9; color: #165c26; }
 
