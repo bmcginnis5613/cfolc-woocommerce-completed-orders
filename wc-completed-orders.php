@@ -5,7 +5,7 @@ Plugin Name: WooCommerce Completed Orders
 Description: Completed orders by date range with export.
 Author: FirstTracks Marketing
 Author URI: https://firsttracksmarketing.com/
-Version: 1.4.5
+Version: 1.4.6
 */
 
 // Exit if accessed directly
@@ -937,7 +937,7 @@ class FT_WC_Completed_Orders_Report {
         return false;
     }
 
-    /** Reuse WP All Export's library; never load a second bundled copy. */
+    /** Load the PhpSpreadsheet copy bundled with this plugin. */
     private function load_spreadsheet_library() {
         if (class_exists('PhpOffice\\PhpSpreadsheet\\Spreadsheet') && class_exists('PhpOffice\\PhpSpreadsheet\\Writer\\Xlsx')) {
             return;
@@ -945,16 +945,16 @@ class FT_WC_Completed_Orders_Report {
         if ($this->has_loaded_phpspreadsheet_symbols()) {
             throw new \RuntimeException('An incomplete PhpSpreadsheet library is already loaded. Update the plugin providing the spreadsheet library.');
         }
-        if (!class_exists('PMXE_Plugin', false) || !defined('PMXE_Plugin::ROOT_DIR')) {
-            throw new \RuntimeException('Activate WP All Export Pro with its PhpSpreadsheet library to export XLSX.');
-        }
-        $autoload = rtrim(\PMXE_Plugin::ROOT_DIR, '/\\') . '/vendor/autoload.php';
+
+        $autoload = __DIR__ . '/vendor/autoload.php';
         if (!is_readable($autoload)) {
-            throw new \RuntimeException('This WP All Export installation does not expose vendor/autoload.php. Update WP All Export to a version that includes PhpSpreadsheet.');
+            throw new \RuntimeException('The bundled spreadsheet library is missing. Reinstall the WooCommerce Completed Orders plugin.');
         }
+
         require_once $autoload;
+
         if (!class_exists('PhpOffice\\PhpSpreadsheet\\Spreadsheet') || !class_exists('PhpOffice\\PhpSpreadsheet\\Writer\\Xlsx')) {
-            throw new \RuntimeException('This WP All Export version does not provide a compatible PhpSpreadsheet XLSX writer.');
+            throw new \RuntimeException('The bundled spreadsheet library does not provide a compatible XLSX writer. Reinstall the WooCommerce Completed Orders plugin.');
         }
     }
 
