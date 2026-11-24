@@ -5,7 +5,7 @@ Plugin Name: WooCommerce Completed Orders
 Description: Completed orders by date range with export.
 Author: FirstTracks Marketing
 Author URI: https://firsttracksmarketing.com/
-Version: 1.4.6
+Version: 1.4.7
 */
 
 // Exit if accessed directly
@@ -165,6 +165,8 @@ class FT_WC_Completed_Orders_Report {
             'invoice'  => true,
             'payment'  => true,
             'last4'    => true,
+            'billing_city' => true,
+            'billing_state' => true,
             'reference' => true,
         );
     }
@@ -686,6 +688,8 @@ class FT_WC_Completed_Orders_Report {
             $rows[] = array(
                 'payment' => $payment['payment'],
                 'last4' => $payment['last4'],
+                'billing_city' => (string) $order->get_billing_city(),
+                'billing_state' => (string) $order->get_billing_state(),
                 'reference' => $payment['reference'],
                 'edit_url' => $order->get_edit_order_url(),
                 'completed' => $report_date_timestamp ? wp_date('F j, Y', $report_date_timestamp, wp_timezone()) : '',
@@ -859,6 +863,8 @@ class FT_WC_Completed_Orders_Report {
             'Total',
             'Payment Method',
             'CC Digits',
+            'Billing City',
+            'Billing State',
             'ACH/Check Ref',
             'Email',
         );
@@ -891,6 +897,8 @@ class FT_WC_Completed_Orders_Report {
             $row['total'],
             $row['payment'],
             $row['last4'],
+            $row['billing_city'],
+            $row['billing_state'],
             $row['reference'],
             $row['email'],
         );
@@ -975,7 +983,7 @@ class FT_WC_Completed_Orders_Report {
 
             // Headers
             $headers = $this->get_xlsx_headers();
-            $columns = range('A', 'O');
+            $columns = range('A', 'Q');
 
             foreach ($headers as $index => $header) {
                 $sheet->setCellValue($columns[$index] . '1', $header);
@@ -988,7 +996,7 @@ class FT_WC_Completed_Orders_Report {
                     'startColor' => array('rgb' => 'E8E8E8'),
                 ),
             );
-            $sheet->getStyle('A1:O1')->applyFromArray($header_style);
+            $sheet->getStyle('A1:Q1')->applyFromArray($header_style);
 
             // Data rows
             $row = 2;
@@ -1189,6 +1197,8 @@ class FT_WC_Completed_Orders_Report {
                             'date'     => 'Event Date',
                             'payment'  => 'Payment Method',
                             'last4'    => 'CC Digits',
+                            'billing_city' => 'Billing City',
+                            'billing_state' => 'Billing State',
                             'reference' => 'ACH/Check Ref',
                             'customer' => 'Customer',
                             'status'   => 'Status',
@@ -1282,7 +1292,7 @@ class FT_WC_Completed_Orders_Report {
                     <th class="usr-col-total"<?php echo $hide('total'); ?>>
                         Total
                     </th>
-                    <?php foreach (array('payment' => 'Payment Method', 'last4' => 'CC Digits', 'reference' => 'ACH/Check Ref') as $key => $label) : ?>
+                    <?php foreach (array('payment' => 'Payment Method', 'last4' => 'CC Digits', 'billing_city' => 'Billing City', 'billing_state' => 'Billing State', 'reference' => 'ACH/Check Ref') as $key => $label) : ?>
                         <th class="usr-col-<?php echo esc_attr($key); ?>"<?php echo $hide($key); ?>><?php echo esc_html($label); ?></th>
                     <?php endforeach; ?>
                     <th class="usr-col-invoice"<?php echo $hide('invoice'); ?>>
@@ -1368,7 +1378,7 @@ class FT_WC_Completed_Orders_Report {
                             ?>
                         </td>
 
-                        <?php foreach (array('payment', 'last4', 'reference') as $key) : ?>
+                        <?php foreach (array('payment', 'last4', 'billing_city', 'billing_state', 'reference') as $key) : ?>
                             <td class="usr-col-<?php echo esc_attr($key); ?>"<?php echo $hide($key); ?>><?php echo esc_html($row[$key] !== '' ? $row[$key] : '—'); ?></td>
                         <?php endforeach; ?>
                         <!-- Invoice -->
@@ -1395,7 +1405,7 @@ class FT_WC_Completed_Orders_Report {
             </tbody>
             <tfoot>
                 <tr>
-                    <td colspan="14">
+                    <td colspan="16">
                         <strong>
                             Showing <?php echo esc_html(number_format_i18n(count($rows))); ?>
                             of <?php echo esc_html(number_format_i18n((int) $total)); ?> orders
