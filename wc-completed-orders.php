@@ -161,12 +161,12 @@ class FT_WC_Completed_Orders_Report {
             'items'    => true,
             'renewal'  => true,
             'chapter'  => true,
+            'billing_city' => true,
+            'billing_state' => true,
             'total'    => true,
             'invoice'  => true,
             'payment'  => true,
             'last4'    => true,
-            'billing_city' => true,
-            'billing_state' => true,
             'reference' => true,
         );
     }
@@ -860,11 +860,11 @@ class FT_WC_Completed_Orders_Report {
             'Product',
             'Membership Renewal',
             'Chapter(s)',
+            'Billing City',
+            'Billing State',
             'Total',
             'Payment Method',
             'CC Digits',
-            'Billing City',
-            'Billing State',
             'ACH/Check Ref',
             'Email',
         );
@@ -894,11 +894,11 @@ class FT_WC_Completed_Orders_Report {
             implode(', ', $product_names),
             $row['renewal'],
             $row['buddyboss_groups'],
+            $row['billing_city'],
+            $row['billing_state'],
             $row['total'],
             $row['payment'],
             $row['last4'],
-            $row['billing_city'],
-            $row['billing_state'],
             $row['reference'],
             $row['email'],
         );
@@ -1004,7 +1004,7 @@ class FT_WC_Completed_Orders_Report {
                 foreach ($this->get_xlsx_row($r) as $index => $value) {
                     $cell = $columns[$index] . $row;
 
-                    if ($index === 10) {
+                    if ($index === 12) {
                         $xlsx_total = $r['status'] === 'refunded'
                             ? -abs((float) $r['total'])
                             : (float) $r['total'];
@@ -1023,7 +1023,7 @@ class FT_WC_Completed_Orders_Report {
                         continue;
                     }
 
-                    if ($index === 12 && preg_match('/^[0-9]{4}$/D', (string) $value)) {
+                    if ($index === 14 && preg_match('/^[0-9]{4}$/D', (string) $value)) {
                         $sheet->getCell($cell)->setValueExplicit(
                             (int) $value,
                             \PhpOffice\PhpSpreadsheet\Cell\DataType::TYPE_NUMERIC
@@ -1037,10 +1037,10 @@ class FT_WC_Completed_Orders_Report {
             }
 
             if ($row > 2) {
-                $sheet->getStyle('K2:K' . ($row - 1))
+                $sheet->getStyle('M2:M' . ($row - 1))
                     ->getNumberFormat()
                     ->setFormatCode('#,##0.00;(#,##0.00)');
-                $sheet->getStyle('M2:M' . ($row - 1))
+                $sheet->getStyle('O2:O' . ($row - 1))
                     ->getNumberFormat()
                     ->setFormatCode('0000');
             }
@@ -1197,8 +1197,6 @@ class FT_WC_Completed_Orders_Report {
                             'date'     => 'Event Date',
                             'payment'  => 'Payment Method',
                             'last4'    => 'CC Digits',
-                            'billing_city' => 'Billing City',
-                            'billing_state' => 'Billing State',
                             'reference' => 'ACH/Check Ref',
                             'customer' => 'Customer',
                             'status'   => 'Status',
@@ -1207,6 +1205,8 @@ class FT_WC_Completed_Orders_Report {
                             'items'    => 'Product',
                             'renewal'  => 'Membership Renewal',
                             'chapter'  => 'Chapter(s)',
+                            'billing_city' => 'Billing City',
+                            'billing_state' => 'Billing State',
                             'total'    => 'Total',
                             'invoice'  => 'Invoice #',
                         );
@@ -1254,6 +1254,11 @@ class FT_WC_Completed_Orders_Report {
      * @param int   $total        Total matching events across every page
      */
     private function render_table(array $rows, array $column_prefs, $total) {
+        $billing_columns = array(
+            'billing_city' => 'Billing City',
+            'billing_state' => 'Billing State',
+        );
+
         // Helper: inline style to hide a column when pref is false
         $hide = function($key) use ($column_prefs) {
             return !$column_prefs[$key] ? ' style="display:none;"' : '';
@@ -1289,10 +1294,13 @@ class FT_WC_Completed_Orders_Report {
                     <th class="usr-col-chapter"<?php echo $hide('chapter'); ?>>
                         Chapter(s)
                     </th>
+                    <?php foreach ($billing_columns as $key => $label) : ?>
+                        <th class="usr-col-<?php echo esc_attr($key); ?>"<?php echo $hide($key); ?>><?php echo esc_html($label); ?></th>
+                    <?php endforeach; ?>
                     <th class="usr-col-total"<?php echo $hide('total'); ?>>
                         Total
                     </th>
-                    <?php foreach (array('payment' => 'Payment Method', 'last4' => 'CC Digits', 'billing_city' => 'Billing City', 'billing_state' => 'Billing State', 'reference' => 'ACH/Check Ref') as $key => $label) : ?>
+                    <?php foreach (array('payment' => 'Payment Method', 'last4' => 'CC Digits', 'reference' => 'ACH/Check Ref') as $key => $label) : ?>
                         <th class="usr-col-<?php echo esc_attr($key); ?>"<?php echo $hide($key); ?>><?php echo esc_html($label); ?></th>
                     <?php endforeach; ?>
                     <th class="usr-col-invoice"<?php echo $hide('invoice'); ?>>
@@ -1368,6 +1376,10 @@ class FT_WC_Completed_Orders_Report {
                             <?php echo $row['buddyboss_groups'] !== '' ? esc_html($row['buddyboss_groups']) : '—'; ?>
                         </td>
 
+                        <?php foreach (array_keys($billing_columns) as $key) : ?>
+                            <td class="usr-col-<?php echo esc_attr($key); ?>"<?php echo $hide($key); ?>><?php echo esc_html($row[$key] !== '' ? $row[$key] : '—'); ?></td>
+                        <?php endforeach; ?>
+
                         <!-- Total -->
                         <td class="usr-col-total"<?php echo $hide('total'); ?>>
                             <?php
@@ -1378,7 +1390,7 @@ class FT_WC_Completed_Orders_Report {
                             ?>
                         </td>
 
-                        <?php foreach (array('payment', 'last4', 'billing_city', 'billing_state', 'reference') as $key) : ?>
+                        <?php foreach (array('payment', 'last4', 'reference') as $key) : ?>
                             <td class="usr-col-<?php echo esc_attr($key); ?>"<?php echo $hide($key); ?>><?php echo esc_html($row[$key] !== '' ? $row[$key] : '—'); ?></td>
                         <?php endforeach; ?>
                         <!-- Invoice -->
